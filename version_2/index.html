@@ -1,0 +1,58 @@
+<html>
+    <head>
+        <style>
+            body{
+                background-color: black;
+                color: white;
+            }
+            canvas, span{
+                margin:auto;
+                display: block;
+            }
+
+            span{
+                width:min-content;
+            }
+        </style>
+    </head>
+    <body>
+        CLICK BELOW
+        <canvas width="512px" height="512px"></canvas>
+        <span>viscosity: <input type="range" max="100" min="1" value="1" id="visc_range"></span>
+        <span>speed: <input type="range" max="100" min="1" value="1" id="speed_range"></span>
+        <script type="module">
+            import fluidSim from './water.mjs';
+
+            let canvas, cx;
+            const fluid = new fluidSim(50,50);
+
+            window.onload = async () =>{
+                canvas = document.querySelector("canvas");
+                cx = canvas.getContext("2d");
+
+                canvas.addEventListener("mousedown", e => {
+                    const x = e.x - canvas.offsetLeft;
+                    const y = e.y - canvas.offsetTop;
+                    fluid.poke(canvas,x,y);
+                });
+
+                document.getElementById("visc_range").addEventListener("change", e => {
+                    fluid.v = Number.parseInt(e.target.value);
+                });
+                document.getElementById("speed_range").addEventListener("change", e => {
+                    fluid.c = Number.parseInt(e.target.value);
+                });
+
+                window.setInterval(() => {
+                    fluid.step_physics();
+                }, 10);
+                render();
+            };
+
+            function render(){
+                fluid.render(canvas, cx);
+                window.requestAnimationFrame(render);
+            }
+        </script>
+    </body>
+</html>

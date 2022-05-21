@@ -1,0 +1,151 @@
+<html>
+    <head>
+        <style>
+            body{
+                background-color: black;
+            }
+            canvas, span{
+                margin:auto;
+                display: block;
+                color: white;
+            }
+            span{
+                width:min-content;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas width="512px" height="512px"></canvas>
+        <script type="module">
+             import {glSetup} from "./gl.mjs";
+            import fluidSim from './water.mjs';
+
+            let gl, vert_buffer, shader_program_first, shader_program_post, frame_buffer, quad_buffer;
+
+            const add = ([x1,y1], [x2,y2]) => [x1+x2, y1+y2];
+            const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
+            const sub = ([x1,y1], [x2,y2]) => [x1-x2, y1-y2];
+
+            const mouse = {
+                lastx: 0,
+                lasty: 0,
+                strength: .5,
+                fluid: null,
+                poke: (x,y) => {
+                    mouse.fluid.poke([x, y], sub([x, y],[mouse.lastx, mouse.lasty]).map(v => v * mouse.strength));
+                    [mouse.lastx, mouse.lasty] = [x, y];
+                }
+            };
+
+            window.onload = async () =>{
+                const canvas = document.querySelector("canvas");
+
+                // init shader program for first pass rendering
+                [gl, shader_program_first] = await glSetup(canvas, '../shaders/vert2.vs', '../shaders/frag2.vs');
+
+                // create the texture that will be rendered to first
+                const buffer_tex = gl.createTexture();
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, buffer_tex);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+                // bind texture to frame buffer
+                frame_buffer = gl.createFramebuffer();
+                gl.bindFramebuffer(gl.FRAMEBUFFER, frame_buffer);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, buffer_tex, 0);
+                
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                
+                // init vertex buffer, will be enabled on render
+                vert_buffer = gl.createBuffer();
+
+                // set uniform values particle radius and the projection matrix
+                // the sprite location is set to 1 so it gets the sprite texture from gl.TEXTURE1
+                const part_radius_loc = gl.getUniformLocation(shader_program_first, "particle_radius");
+                gl.uniform1f(part_radius_loc, 20);
+                const proj_location = gl.getUniformLocation(shader_program_first, "projection");
+                gl.uniformMatrix3fv(proj_location, false, new Float32Array([2/canvas.width,0,0, 0,-2/canvas.height,0, -1,1,1]));
+                const sprite_loc = gl.getUniformLocation(shader_program_first, "point_sprite");
+                gl.uniform1i(sprite_loc, 1);
+
+                // calculate radial gradient sprite
+                const particle_sprite_data = [];
+                for(let i=0; i<32; i++){
+                    for(let j=0; j<32; j++){
+                        const diff = sub([i/32, j/32], [.5,.5]);
+                        const dist = Math.hypot(...diff);
+                        const intensity = clamp(Math.pow(1 - dist, 2) - .1, 0, 1);
+                        particle_sprite_data.push(255, 255, 255, 255 * intensity);
+                    }
+                }
+
+                // create gl texuture with sprite data, bind to gl.TEXTURE1
+                const texture = gl.createTexture();
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 32, 32, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(particle_sprite_data));
+                gl.generateMipmap(gl.TEXTURE_2D);
+
+                // init post processing shader program
+                [gl, shader_program_post] = await glSetup(canvas, '../shaders/vert3.vs','../shaders/frag3.vs');
+
+                // constant that helps blurring
+                const offset_loc = gl.getUniformLocation(shader_program_post, "offset");
+                gl.uniform1f(offset_loc, 3/canvas.width);
+
+                const fluid = mouse.fluid = new fluidSim(20, 20, canvas);
+
+                canvas.addEventListener("mouseover", (e)=>{
+                    mouse.lastx = e.x - canvas.offsetLeft;
+                    mouse.lasty = e.y - canvas.offsetTop;
+                });
+                canvas.addEventListener("mousemove", (e)=>{
+                    const x = e.x - canvas.offsetLeft;
+                    const y = e.y - canvas.offsetTop;
+                    mouse.poke(x,y);
+                });
+                
+                document.addEventListener("visibilitychange", function (event) {
+                    if (!document.hidden) {
+                        fluid.last_t = new Date().getTime();
+                    }
+                });
+
+                window.setInterval(()=>{
+                    if(document.hidden){ return; }
+                    fluid.step_physics();
+                }, 1);
+                
+                render(fluid);
+            };
+
+            const quad = new Float32Array([-1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1]);
+            function render(fluid){
+                const switchProgram = (program, frame_buffer) => {
+                    gl.useProgram(program);
+                    
+                    gl.bindBuffer(gl.ARRAY_BUFFER, vert_buffer);
+
+                    let posAttribLoc = gl.getAttribLocation(program, "vPos");
+                    gl.enableVertexAttribArray(posAttribLoc);
+                    gl.vertexAttribPointer(posAttribLoc, 2, gl.FLOAT, false, 0, 0);
+
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, frame_buffer);
+                    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                };
+                
+                switchProgram(shader_program_first, frame_buffer);
+                fluid.render(gl, vert_buffer);
+                
+                switchProgram(shader_program_post, null);
+                gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+                window.requestAnimationFrame(render.bind(null,fluid));
+            }
+        </script>
+    </body>
+</html>

@@ -1,0 +1,60 @@
+<html>
+    <head>
+        <style>
+            body{
+                background-color: black;
+            }
+            canvas, span{
+                position:absolute;
+                top:0px;
+                left:0px;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas width="512px" height="512px"></canvas>
+        <script type="module">
+            import fluidSim from './water.mjs';
+
+            let canvas, cx, fluid, marray, gl, vert_buffer, shader_program;
+            const add = ([x1,y1], [x2,y2]) => [x1+x2, y1+y2];
+            const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
+            const sub = ([x1,y1], [x2,y2]) => [x1-x2, y1-y2];
+
+            window.onload = async () =>{
+                canvas = document.querySelector("canvas");
+                cx = canvas.getContext("2d");
+
+                fluid = new fluidSim(60, 60, 200, canvas);
+
+                canvas.addEventListener("mouseover", (e)=>{
+                    fluid.lastx = e.x - canvas.offsetLeft;
+                    fluid.lasty = e.y - canvas.offsetTop;
+                });
+                canvas.addEventListener("mousemove", (e)=>{
+                    const x = e.x - canvas.offsetLeft;
+                    const y = e.y - canvas.offsetTop;
+                    fluid.poke(x,y);
+                });
+
+                cx.fillStyle="red";
+                window.setInterval(()=>{
+                    fluid.step_physics();
+                }, 10);
+                render();
+            };
+
+            function render(){
+                cx.clearRect(0,0,canvas.width,canvas.height);
+                const dx = canvas.width / fluid.width;
+                const dy = canvas.width / fluid.height;
+                fluid.particles.forEach(part=>{
+                    cx.beginPath();
+                    cx.arc(...part.pos, fluid.particle_radius, 0, Math.PI*2, false);
+                    cx.fill();
+                });
+                window.requestAnimationFrame(render);
+            }
+        </script>
+    </body>
+</html>
